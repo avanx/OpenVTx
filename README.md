@@ -1,3 +1,5 @@
+English | [简体中文](README_zh.md)
+
 Join us on discord https://discord.gg/uGUKaD2u8Z
 
 # Open source video transmitter firmware for the FPV community
@@ -50,6 +52,31 @@ Any VTx that is currently connected to a flight controller and working via MSP/S
 - Power the FC and VTx.
 - Connect the FC USB.
 - Select the Version, Target, and press Flash.
+
+## One-Shot ST-Link Flashing (Bootloader + Firmware)
+
+For DIY or newly flashed GD32F130 hardware, you no longer need to flash the bootloader from `OpenVTx_bootloader` first and then flash the firmware via UART passthrough. This repository bundles the prebuilt bootloader (`src/bootloader/Generic_GD32F130_bootloader.bin`) and a PlatformIO post-build script (`src/scripts/merge_bootloader.py`) that merges the bootloader and application into a single flashable image while keeping full UART passthrough update support.
+
+### Flash Memory Layout (GD32F130G6 - 32 KB)
+
+| Region | Address | Size | Notes |
+| --- | --- | --- | --- |
+| Bootloader | `0x08000000` – `0x08001FFF` | 8 KB | Bundled `Generic_GD32F130_bootloader.bin` (padded with `0xFF`) |
+| Application | `0x08002000` – `0x08007BFF` | 23 KB | Built with `-Wl,--defsym=FLASH_APP_OFFSET=8K` |
+| Emulated EEPROM | `0x08007C00` – `0x08007FFF` | 1 KB | Stores VTx settings |
+
+### Usage in PlatformIO (`src/platformio.ini`)
+
+1. **Blank or already unlocked MCU (e.g., DIY boards)**: select `DIY_VTX820_stlink` or `Generic_GD32F130_stlink` and click **Upload** (or run `pio run -d src -e DIY_VTX820_stlink -t upload`).
+2. **Read-protected factory VTx (e.g., EWRF E7082VM first-time flash)**: select `DIY_VTX820_stlink_unlock` or `Generic_GD32F130_stlink_unlock` and click **Upload**. This unlocks Flash read protection and performs a mass erase before flashing.
+3. **Standalone combined binary**: every build of a `*_stlink` environment also outputs `src/.pio/build/<env>/firmware_combined.bin`, which can be flashed directly at `0x08000000` using STM32CubeProgrammer, ST-Link Utility, or an offline programmer.
+4. **Future UART passthrough updates**: after the initial ST-Link flash, use the standard target environment (`DIY_VTX820`, `Generic_GD32F130`, etc.) or https://openvtx.org/ to update firmware over the flight controller UART without touching the bootloader.
+
+> **Note:** To add a one-shot ST-Link environment for another GD32F130 target in `src/platformio.ini`, inherit from the standard 8 KB-offset environment (never `*_develop`):
+> ```ini
+> [env:<TARGET>_stlink]
+> extends = env:<TARGET>, env_gd32f130_stlink
+> ```
 
 # Currently Supported VTx
 
