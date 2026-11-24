@@ -10,11 +10,13 @@
 #include "gpio.h"
 #include "button.h"
 #include "modeIndicator.h"
+#include "powerControl.h"
 
-#if !DEBUG
+#if !DEBUG && !POWER_PID_TUNING
 static uint32_t protocol_checked;
-#endif /* !DEBUG */
+#endif /* !DEBUG && !POWER_PID_TUNING */
 
+#if !POWER_PID_TUNING
 static void start_serial(uint8_t type)
 {
   uint32_t baud, stopbits;
@@ -42,6 +44,7 @@ static void start_serial(uint8_t type)
   serial_begin(baud, UART_TX, UART_RX, stopbits);
   myEEPROM.vtxMode = type;
 }
+#endif /* !POWER_PID_TUNING */
 
 void checkRTC6705isAlive()
 {
@@ -68,7 +71,11 @@ void setup(void)
   rtc6705ResetState(); // During testing registers got messed up. So now it gets reset on boot!
   rtc6705WriteFrequency(myEEPROM.currFreq);
 
+#if POWER_PID_TUNING
+  power_control_tuning_init();
+#else
   start_serial(myEEPROM.vtxMode);
+#endif
 
   status_leds_init();
   button_init();
@@ -78,6 +85,7 @@ void setup(void)
 
 void loop(void)
 {
+#if !POWER_PID_TUNING
   uint32_t now = millis();
 
 #if !DEBUG
@@ -123,6 +131,7 @@ void loop(void)
   default:
     break;
   }
+#endif /* !POWER_PID_TUNING */
 
   checkButton();
 

@@ -1,14 +1,13 @@
 #include "targets.h"
 #include "common.h"
 #include "openVTxEEPROM.h"
+#include "powerControl.h"
 //#include "rtc6705.h"
 #include "gpio.h"
 #include "pwm.h"
 #include "printf.h"
 #include "helpers.h"
 #include <math.h>
-
-#define OUTPUT_POWER_INTERVAL 5 // ms
 
 /* SA2.1 powerlevels in dBm.
  *
@@ -156,29 +155,12 @@ void target_rfPowerAmpPinSetup(void)
   pwm_out_write(outputPowerTimer, 3000);
 
   vpd_pin = adc_config(VPD);
+  power_control_init(&g_powerCtrl, pwm_val);
 }
 
 uint32_t vpd_value_get(void)
 {
   return adc_read(vpd_pin);
-}
-
-void increasePWMVal()
-{
-  if (pwm_val < 2500)
-  {
-    pwm_val++;
-    pwm_out_write(outputPowerTimer, pwm_val);
-  }
-}
-
-void decreasePWMVal()
-{
-  if (pwm_val > 2000)
-  {
-    pwm_val--;
-    pwm_out_write(outputPowerTimer, pwm_val);
-  }
 }
 
 void target_set_power_dB(float dB)
@@ -209,25 +191,22 @@ void target_set_power_dB(float dB)
   amp_state = 1;
   gpio_out_write(vref_pin, amp_state);
   #endif /* OUTPUT_POWER_TESTING */
+
+  power_control_on_power_change(&g_powerCtrl, pwm_val, amp_state);
 }
 
 void checkPowerOutput(void)
 {
-  static uint32_t temp;
-  uint32_t now = millis();
-  if (OUTPUT_POWER_INTERVAL <= (now - temp))
+  if (power_control_update(
+          &g_powerCtrl,
+          millis(),
+          vpd_value_get,
+          VpdSetPoint,
+          amp_state,
+          &currentVpd,
+          &pwm_val))
   {
-    temp = now;
-    currentVpd = vpd_value_get();
-
-    if (currentVpd > VpdSetPoint)
-    {
-      increasePWMVal();
-    }
-    else if (currentVpd < VpdSetPoint)
-    {
-      decreasePWMVal();
-    }
+    pwm_out_write(outputPowerTimer, pwm_val);
   }
 }
 
@@ -238,7 +217,9 @@ void target_setup(void)
 
 void target_loop(void)
 {
-#if DEBUG
+#if POWER_PID_TUNING
+  power_control_tuning_poll(millis(), VpdSetPoint, currentVpd, pwm_val, amp_state);
+#elif DEBUG
   static uint32_t temp;
   static char buff[32];
   int len;

@@ -78,6 +78,46 @@ For DIY or newly flashed GD32F130 hardware, you no longer need to flash the boot
 > extends = env:<TARGET>, env_gd32f130_stlink
 > ```
 
+# RF Power Closed-Loop PID Control & Tuning
+
+RF output power regulation is implemented as a shared closed-loop module (`src/src/powerControl.h` / `src/src/powerControl.c`) using a **Type-C Incremental PID (I-PD)** controller running every `5 ms`:
+
+- **Zero setpoint kick & fast settling**: proportional and derivative terms act on 1st-order EMA-filtered detector voltage (`VPD`), while integral action drives steady-state error to zero.
+- **PA protection & anti-ripple**: includes asymmetric per-tick PWM slew-rate limiting (protects high-power PAs such as the 1.6W `DIY_VTX820` from transient overshoot), integral deadband, `0.75 LSB` Schmitt output hysteresis, and bumpless initialization across PitMode / frequency-hop mute transitions.
+- **Legacy fallback**: set `-D POWER_CONTROL_MODE=0` in `src/platformio.ini` to switch back to the original `±1` step controller at any time.
+
+### Build-Time PID Parameters (`src/platformio.ini`)
+
+| Macro | Default | Description |
+| --- | --- | --- |
+| `POWER_CONTROL_MODE` | `1` | `1` = Type-C I-PD PID, `0` = Legacy `±1` step |
+| `POWER_PID_KP` | `0.05f` | Proportional damping gain on filtered `VPD` (keep `< 0.12f`) |
+| `POWER_PID_KI` | `0.02f` | Integral gain on `VPD` tracking error |
+| `POWER_PID_KD` | `0.00f` | Derivative gain on filtered `VPD` |
+| `POWER_PID_EMA_ALPHA` | `0.25f` | EMA low-pass filter factor (`0.01..1.0`, suppresses 50/60 Hz video ripple) |
+| `POWER_PID_DEADBAND_MV` | `3.0f` | Integral error deadband (`mV`) |
+| `POWER_PID_MAX_STEP_DOWN` | `10.0f` | Max PWM decrease per `5 ms` (limits RF power ramp-up rate) |
+| `POWER_PID_MAX_STEP_UP` | `15.0f` | Max PWM increase per `5 ms` (limits RF power ramp-down rate) |
+| `POWER_PID_HYSTERESIS` | `0.75f` | PWM quantization Schmitt hysteresis (counts) |
+
+### Live UART Tuning Without Reflashing (`python/pid_tuner.py`)
+
+1. Flash a tuning build (`DIY_VTX820_tune` / `Generic_GD32F130_tune` via UART passthrough, or `*_tune_stlink` via ST-Link), which exposes a `57600 8N1` half-duplex CLI on `PA9`.
+2. Launch the interactive tuner (either through a Betaflight FC USB connection or a direct USB-TTL adapter on `PA9`):
+   ```bash
+   # Via Betaflight flight controller USB (add --plot if matplotlib is installed)
+   python python/pid_tuner.py --fc --plot
+
+   # Or via direct half-duplex USB-TTL adapter
+   python python/pid_tuner.py --port COM5
+   ```
+3. Tune gains and capture step responses in real time:
+   - `?` — inspect current gains and live `VpdSetPoint / VPD / PWM`
+   - `p=0.06`, `i=0.025`, `d=0.01`, `a=0.25`, `b=3`, `l=10`, `u=15` — update parameters in RAM immediately
+   - `step 20 32` — run an automated `20 -> 32 dBm` step test, save `20 ms` telemetry to CSV, and print rise time, settling time, overshoot, and ripple
+   - `ab 20 32` — run a back-to-back A/B comparison between Legacy `±1` (`m=0`) and PID (`m=1`)
+   - `boot=msp` (or `boot=sa`) — reboot VTx into the bootloader so you can flash the normal firmware (`DIY_VTX820` / `Generic_GD32F130`) with your finalized parameters in `src/platformio.ini`
+
 # Currently Supported VTx
 
 OpenVTx is continually adding support for more hardware.  The most up to date list will be found in the ```platformio.ini``` file. https://github.com/OpenVTx/OpenVTx/blob/master/src/platformio.ini

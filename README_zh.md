@@ -78,6 +78,46 @@ VTx 状态 LED 指示逻辑如下：
 > extends = env:<目标名>, env_gd32f130_stlink
 > ```
 
+# 射频功率闭环 PID 控制与调参
+
+射频输出功率自动控制（APC）已抽取为公共闭环模块（`src/src/powerControl.h` / `src/src/powerControl.c`），默认采用 **`5 ms` 周期的 Type-C 增量式 PID（I-PD）** 算法：
+
+- **快速收敛且无切档冲击**：比例项与微分项仅对一阶 EMA 低通滤波后的检波电压 `VPD` 求差分，积分项负责消除稳态误差，大幅缩短功率切换响应时间并避免切档超调。
+- **功放保护与抗纹波**：内置非对称单步 PWM 变化率限幅（防止 1.6W `DIY_VTX820` 等大功率功放瞬态过冲）、积分死区、`0.75 LSB` 施密特迟滞量化（消除稳态 `±1` 翻转抖动与 50/60 Hz 视频场频包络干扰），并在 PitMode / 切频静音恢复时执行无扰切换（Bumpless Transfer）。
+- **兼容原版步进模式**：在 `src/platformio.ini` 中设置 `-D POWER_CONTROL_MODE=0` 即可随时切回原版 `±1` 定步长控制进行对比。
+
+### 编译期 PID 参数表（`src/platformio.ini`）
+
+| 宏名称 | 默认值 | 说明 |
+| --- | --- | --- |
+| `POWER_CONTROL_MODE` | `1` | `1` = Type-C I-PD 闭环 PID，`0` = 原版 `±1` 定步长 |
+| `POWER_PID_KP` | `0.05f` | 滤波测量值比例阻尼增益（建议保持 `< 0.12f`） |
+| `POWER_PID_KI` | `0.02f` | 误差积分增益 |
+| `POWER_PID_KD` | `0.00f` | 滤波测量值微分增益 |
+| `POWER_PID_EMA_ALPHA` | `0.25f` | `VPD` 一阶低通滤波系数（`0.01..1.0`，抑制视频调制纹波） |
+| `POWER_PID_DEADBAND_MV` | `3.0f` | 稳态积分死区（`mV`） |
+| `POWER_PID_MAX_STEP_DOWN` | `10.0f` | 每 `5 ms` 最大 PWM 减小步长（限制**升功率**斜率，保护 PA） |
+| `POWER_PID_MAX_STEP_UP` | `15.0f` | 每 `5 ms` 最大 PWM 增大步长（限制**降功率**斜率） |
+| `POWER_PID_HYSTERESIS` | `0.75f` | 输出量化施密特迟滞（PWM 步数） |
+
+### 免重刷在线串口调参（`python/pid_tuner.py`）
+
+1. 烧录带 `_tune` 后缀的调参环境（UART 透传用 `DIY_VTX820_tune` / `Generic_GD32F130_tune`，ST-Link 用 `*_tune_stlink`），固件会在 `PA9` 上启用 `57600 8N1` 单线半双工调参终端。
+2. 运行交互式调参脚本（支持通过飞控 USB 自动开启 Betaflight Passthrough，或用 USB-TTL 直接接 `PA9`）：
+   ```bash
+   # 通过 Betaflight 飞控 USB 连接（安装 matplotlib 后加 --plot 可弹窗绘制曲线）
+   python python/pid_tuner.py --fc --plot
+
+   # 或通过半双工 USB-TTL 直接连接 PA9
+   python python/pid_tuner.py --port COM5
+   ```
+3. 常用实时调参命令：
+   - `?` —— 查看当前 PID 参数及实时 `VpdSetPoint / VPD / PWM` 状态
+   - `p=0.06`、`i=0.025`、`d=0.01`、`a=0.25`、`b=3`、`l=10`、`u=15` —— 在 RAM 中实时修改参数并立即生效
+   - `step 20 32` —— 自动执行 `20 -> 32 dBm` 阶跃响应测试，保存 `20 ms` 间隔 CSV 波形，并当场计算打印上升时间、调节时间、超调量与稳态纹波
+   - `ab 20 32` —— 自动同条件运行原版 `±1`（`m=0`）与 PID（`m=1`）阶跃测试并输出对比汇总
+   - `boot=msp`（或 `boot=sa`）—— 调好后将参数填入 `src/platformio.ini`，发送该命令即可让图传重启进入 Bootloader，直接通过飞控串口刷回正式固件（如 `DIY_VTX820`）
+
 # 当前支持的图传硬件
 
 OpenVTx 持续增加对更多硬件的支持，最新支持列表请查看 [src/platformio.ini](src/platformio.ini) 文件。
